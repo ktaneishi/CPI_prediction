@@ -87,53 +87,45 @@ class CompoundProteinInteractionPrediction(nn.Module):
             return correct_labels, predicted_labels, predicted_scores
 
 
-class Trainer(object):
-    def __init__(self, model):
-        self.model = model
-        self.optimizer = optim.Adam(self.model.parameters(),
-                                    lr=lr, weight_decay=weight_decay)
-
-    def train(self, dataset):
-        np.random.shuffle(dataset)
-        N = len(dataset)
-        loss_total = 0
-        for data in dataset:
-            loss = self.model(data)
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
-            loss_total += loss.to('cpu').data.numpy()
-        return loss_total
+def train(model, dataset):
+    np.random.shuffle(dataset)
+    N = len(dataset)
+    loss_total = 0
+    for data in dataset:
+        loss = model(data)
+        model.optimizer.zero_grad()
+        loss.backward()
+        model.optimizer.step()
+        loss_total += loss.to('cpu').data.numpy()
+    return loss_total
 
 
-class Tester(object):
-    def __init__(self, model):
-        self.model = model
+def test(model, dataset):
+    N = len(dataset)
+    T, Y, S = [], [], []
+    for data in dataset:
+        (correct_labels, predicted_labels,
+         predicted_scores) = model(data, train=False)
+        T.append(correct_labels)
+        Y.append(predicted_labels)
+        S.append(predicted_scores)
+    AUC = roc_auc_score(T, S)
+    precision = precision_score(T, Y)
+    recall = recall_score(T, Y)
+    return AUC, precision, recall
 
-    def test(self, dataset):
-        N = len(dataset)
-        T, Y, S = [], [], []
-        for data in dataset:
-            (correct_labels, predicted_labels,
-             predicted_scores) = self.model(data, train=False)
-            T.append(correct_labels)
-            Y.append(predicted_labels)
-            S.append(predicted_scores)
-        AUC = roc_auc_score(T, S)
-        precision = precision_score(T, Y)
-        recall = recall_score(T, Y)
-        return AUC, precision, recall
 
-    def save_AUCs(self, AUCs, filename):
-        with open(filename, 'a') as f:
-            f.write('\t'.join(map(str, AUCs)) + '\n')
+def save_AUCs(AUCs, filename):
+    with open(filename, 'a') as f:
+        f.write('\t'.join(map(str, AUCs)) + '\n')
 
-    def save_model(self, model, filename):
-        torch.save(model.state_dict(), filename)
+
+def save_model(model, filename):
+    torch.save(model.state_dict(), filename)
 
 
 def load_tensor(file_name, dtype):
-    return [dtype(d).to(device) for d in np.load(file_name + '.npy')]
+    return [dtype(d).to(device) for d in np.load(file_name + '.npy', allow_pickle=True)]
 
 
 def load_pickle(file_name):
@@ -193,8 +185,11 @@ if __name__ == "__main__":
     """Set a model."""
     torch.manual_seed(1234)
     model = CompoundProteinInteractionPrediction().to(device)
-    trainer = Trainer(model)
-    tester = Tester(model)
+    #if torch.cuda.is_available():
+    #model = torch.nn.DataParallel(model)
+
+    model.optimizer = optim.Adam(model.parameters(),
+                                lr=lr, weight_decay=weight_decay)
 
     """Output files."""
     file_AUCs = '../output/result/AUCs--' + setting + '.txt'
@@ -212,18 +207,19 @@ if __name__ == "__main__":
     for epoch in range(1, iteration):
 
         if epoch % decay_interval == 0:
-            trainer.optimizer.param_groups[0]['lr'] *= lr_decay
+            model.optimizer.param_groups[0]['lr'] *= lr_decay
 
-        loss_train = trainer.train(dataset_train)
-        AUC_dev = tester.test(dataset_dev)[0]
-        AUC_test, precision_test, recall_test = tester.test(dataset_test)
+        loss_train = train(model, dataset_train)
+        AUC_dev = test(model, dataset_dev)[0]
+        AUC_test, precision_test, recall_test = test(model, dataset_test)
 
         end = timeit.default_timer()
         time = end - start
 
         AUCs = [epoch, time, loss_train, AUC_dev,
                 AUC_test, precision_test, recall_test]
-        tester.save_AUCs(AUCs, file_AUCs)
-        tester.save_model(model, file_model)
+
+        save_AUCs(AUCs, file_AUCs)
+        save_model(model, file_model)
 
         print('\t'.join(map(str, AUCs)))
