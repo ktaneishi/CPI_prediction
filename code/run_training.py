@@ -3,17 +3,19 @@ import sys
 import timeit
 
 import numpy as np
+import pandas as pd
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import torch.utils.data
 
 from sklearn.metrics import roc_auc_score, precision_score, recall_score
 
 
 class CompoundProteinInteractionPrediction(nn.Module):
-    def __init__(self):
+    def __init__(self, n_fingerprint, n_word):
         super(CompoundProteinInteractionPrediction, self).__init__()
         self.embed_fingerprint = nn.Embedding(n_fingerprint, dim)
         self.embed_word = nn.Embedding(n_word, dim)
@@ -87,11 +89,13 @@ class CompoundProteinInteractionPrediction(nn.Module):
             return correct_labels, predicted_labels, predicted_scores
 
 
-def train(model, dataset):
-    np.random.shuffle(dataset)
+def train(model, data_loader):
+    model.train()
+    #np.random.shuffle(dataset)
     N = len(dataset)
     loss_total = 0
-    for data in dataset:
+    for batch_idx, data in enumerate(data_loader):
+        #for data in dataset:
         loss = model(data)
         model.optimizer.zero_grad()
         loss.backward()
@@ -101,6 +105,7 @@ def train(model, dataset):
 
 
 def test(model, dataset):
+    model.eval()
     N = len(dataset)
     T, Y, S = [], [], []
     for data in dataset:
@@ -131,12 +136,6 @@ def load_tensor(file_name, dtype):
 def load_pickle(file_name):
     with open(file_name, 'rb') as f:
         return pickle.load(f)
-
-
-def shuffle_dataset(dataset, seed):
-    np.random.seed(seed)
-    np.random.shuffle(dataset)
-    return dataset
 
 
 def split_dataset(dataset, ratio):
@@ -178,13 +177,14 @@ if __name__ == "__main__":
 
     """Create a dataset and split it into train/dev/test."""
     dataset = list(zip(compounds, adjacencies, proteins, interactions))
-    dataset = shuffle_dataset(dataset, 1234)
     dataset_train, dataset_ = split_dataset(dataset, 0.8)
     dataset_dev, dataset_test = split_dataset(dataset_, 0.5)
 
+    dataset_train = torch.utils.data.DataLoader(dataset_train, batch_size=20, shuffle=True)
+
     """Set a model."""
     torch.manual_seed(1234)
-    model = CompoundProteinInteractionPrediction().to(device)
+    model = CompoundProteinInteractionPrediction(n_fingerprint, n_word).to(device)
     #if torch.cuda.is_available():
     #model = torch.nn.DataParallel(model)
 
